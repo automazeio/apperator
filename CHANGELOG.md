@@ -12,3 +12,4 @@ All notable changes to Apperator are listed here. The format follows [Keep a Cha
 - Named data volumes that survive recreates and deletes, with a separate call to delete them.
 - Signed webhooks for app events.
 - A Docker Compose stack with Traefik, Sablier and Apperator.
+- Apps keep their image's health check, but Docker runs it every 250 ms while the app starts, instead of after 5 s. The Compose stack also has Sablier check a waking app every 250 ms instead of every 5 s. Together this cut a real app's cold wake from 11.5 s to about 2.7 s.

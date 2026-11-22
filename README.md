@@ -76,9 +76,11 @@ Hostnames under `.localhost`, such as `demo.localhost`, resolve to your machine 
 ## How waking works
 
 1. A request arrives for a sleeping app. Traefik passes it to the Sablier plugin.
-2. Sablier starts the container and holds the request until it is running.
+2. Sablier starts the container and holds the request until it is running, or healthy if the image has a health check. Apperator has Docker run that check every 250 ms while the app starts, and the Compose stack has Sablier look every 250 ms (both default to 5 s).
 3. Sablier waits a little longer (`APPERATOR_READY_AFTER`, 500 ms by default), so Traefik has time to add the container's address to its route. Without this pause, the plugin would redirect the client to the same URL faster than Traefik can update, and browsers would give up after 20 redirects.
-4. The request reaches the app. Measured on Docker Desktop: about 0.8 s from the first request to the answer, with one redirect that browsers and most HTTP clients follow on their own.
+4. The request reaches the app, after one redirect that browsers and most HTTP clients follow on their own.
+
+How long this takes depends mostly on how fast your app boots. A Node.js app that boots in about 1.5 s answered its first request in about 2.7 s on a 2-core server. Several apps waking at once share the CPU, so six of them took about 14 s each on the same server.
 
 Scheduled wake-ups go through Sablier's API too, so Sablier's idle timer applies to them in the same way.
 
@@ -116,6 +118,7 @@ Apperator reads its settings from environment variables.
 
 - The API can run any image with any settings on your server, which is close to root access. Treat the token like a root password and keep the API off the public internet.
 - Apperator needs the Docker socket. So do Traefik (read-only) and Sablier.
+- Every hostname that gets its own certificate is published in public Certificate Transparency logs, and bots start scanning it within minutes. Each scan wakes a sleeping app. A wildcard certificate (a DNS challenge in Traefik) keeps your customers' hostnames out of those logs.
 - Apps run with `no-new-privileges`, a process limit and your memory and CPU limits. They share one Docker network, so an app can reach the others: use a firewall inside your apps, or one Apperator per trust boundary, if that matters to you.
 
 ## Status

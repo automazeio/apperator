@@ -170,11 +170,14 @@ func containerBody(cfg *config.Config, id string, s *Spec, imageID string) (map[
 		host["Mounts"] = []map[string]any{{"Type": "volume", "Source": volumeName(cfg, id), "Target": s.DataPath}}
 	}
 	body := map[string]any{
-		"Image":            s.Image,
-		"Env":              env,
-		"Labels":           labels,
-		"StopTimeout":      cfg.StopTimeout,
-		"HostConfig":       host,
+		"Image":       s.Image,
+		"Env":         env,
+		"Labels":      labels,
+		"StopTimeout": cfg.StopTimeout,
+		"HostConfig":  host,
+		// Keep the image's own health check, but run it every 250ms while the app starts. Docker's
+		// default is 5s, and Sablier holds a waking request until the container is healthy.
+		"Healthcheck":      map[string]any{"StartInterval": int64(250 * time.Millisecond), "StartPeriod": int64(cfg.StartTimeout)},
 		"NetworkingConfig": map[string]any{"EndpointsConfig": map[string]any{cfg.Network: map[string]any{"Aliases": []string{name}}}},
 	}
 	if len(s.Command) > 0 {

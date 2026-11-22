@@ -34,7 +34,8 @@ services:
   sablier:
     image: sablierapp/sablier:1.21.1
     restart: unless-stopped
-    command: [start, --provider.name=docker]
+    # Check a waking app every 250ms (the default is 5s, which adds up to 5s to every wake).
+    command: [start, --provider.name=docker, "--strategy.blocking.default-refresh-frequency=${SABLIER_REFRESH:-250ms}"]
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     networks: [apperator]
