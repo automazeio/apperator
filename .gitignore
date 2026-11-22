@@ -1,0 +1,6 @@
+/apperator
+/dist/
+/.data/
+*.test
+.env
+CLAUDE.md

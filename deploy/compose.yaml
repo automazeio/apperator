@@ -1,0 +1,70 @@
+# Apperator with Traefik (routing) and Sablier (idle stop and wake on request).
+#
+#   export APPERATOR_TOKEN=$(openssl rand -hex 32)
+#   docker compose -f deploy/compose.yaml up -d
+#
+# For HTTPS, set APPERATOR_CERT_RESOLVER=letsencrypt and ACME_EMAIL, and open ports 80 and 443.
+name: apperator
+
+services:
+  traefik:
+    image: traefik:v3.7
+    restart: unless-stopped
+    command:
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --providers.docker.network=apperator
+      # Reload quickly when a sleeping app starts (the default is 2s).
+      - --providers.providersThrottleDuration=${TRAEFIK_THROTTLE:-200ms}
+      - --entrypoints.web.address=:80
+      - --entrypoints.websecure.address=:443
+      - --experimental.plugins.sablier.modulename=github.com/sablierapp/sablier-traefik-plugin
+      - --experimental.plugins.sablier.version=v1.4.0
+      - --certificatesresolvers.letsencrypt.acme.tlschallenge=true
+      - --certificatesresolvers.letsencrypt.acme.email=${ACME_EMAIL:-}
+      - --certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - letsencrypt:/letsencrypt
+    networks: [apperator]
+
+  sablier:
+    image: sablierapp/sablier:1.21.1
+    restart: unless-stopped
+    command: [start, --provider.name=docker]
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks: [apperator]
+
+  apperator:
+    image: ghcr.io/automazeio/apperator:latest
+    build: ..
+    restart: unless-stopped
+    environment:
+      APPERATOR_TOKEN: ${APPERATOR_TOKEN:?set APPERATOR_TOKEN, for example with openssl rand -hex 32}
+      APPERATOR_SABLIER_URL: http://sablier:10000
+      APPERATOR_ENTRYPOINTS: ${APPERATOR_ENTRYPOINTS:-websecure}
+      APPERATOR_TLS: ${APPERATOR_TLS:-true}
+      APPERATOR_CERT_RESOLVER: ${APPERATOR_CERT_RESOLVER:-}
+      APPERATOR_WEBHOOK_URL: ${APPERATOR_WEBHOOK_URL:-}
+      APPERATOR_WEBHOOK_SECRET: ${APPERATOR_WEBHOOK_SECRET:-}
+      APPERATOR_TICK: ${APPERATOR_TICK:-30s}
+      APPERATOR_READY_AFTER: ${APPERATOR_READY_AFTER:-500ms}
+    ports:
+      # The API. Keep it private: put it behind a VPN or a firewall, never on the open internet.
+      - "127.0.0.1:7070:7070"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - apperator:/var/lib/apperator
+    networks: [apperator]
+
+networks:
+  apperator:
+    name: apperator
+
+volumes:
+  apperator:
+  letsencrypt:
