@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -109,16 +110,12 @@ func TestContainerBody(t *testing.T) {
 		"apperator.managed": "true",
 		"apperator.app":     "acme",
 		"apperator.hash":    hash,
-		"traefik.enable":    "true",
-		"traefik.http.routers.apperator-acme.rule":                                       "Host(`acme.example.com`)",
-		"traefik.http.routers.apperator-acme.tls":                                        "true",
-		"traefik.http.services.apperator-acme.loadbalancer.server.port":                  "3000",
-		"traefik.http.routers.apperator-acme.middlewares":                                "apperator-acme-sablier@docker",
-		"traefik.http.middlewares.apperator-acme-sablier.plugin.sablier.sessionDuration": "15m",
-		"traefik.http.middlewares.apperator-acme-sablier.plugin.sablier.group":           "apperator-acme",
-		"traefik.docker.allownonrunning":                                                 "true",
-		"sablier.enable":                                                                 "true",
-		"sablier.group":                                                                  "apperator-acme",
+		"traefik.enable":    "false",
+		"sablier.enable":    "true",
+		"sablier.group":     "apperator-acme",
+	}
+	if len(labels) != len(want) {
+		t.Errorf("labels: %v", labels)
 	}
 	for k, v := range want {
 		if labels[k] != v {
@@ -142,8 +139,8 @@ func TestContainerBody(t *testing.T) {
 
 	s.Hostnames = nil
 	body, _ = containerBody(cfg, "acme", &s, "sha256:aaa")
-	if body["Labels"].(map[string]string)["traefik.enable"] != "false" {
-		t.Error("an app without hostnames must not be routed")
+	if body["Labels"].(map[string]string)["sablier.enable"] != "" {
+		t.Error("an app without hostnames must not use Sablier")
 	}
 }
 
@@ -156,4 +153,40 @@ func TestParseWakeTime(t *testing.T) {
 			t.Errorf("%q should mean no wake-up", s)
 		}
 	}
+}
+
+func TestTraefikConfig(t *testing.T) {
+	cfg := testConfig()
+	cfg.CertResolver = "letsencrypt"
+	s := validSpec()
+	s.Hostnames = []string{"acme.example.com", "sign.acme.com"}
+
+	always := Spec{Image: "x", Hostnames: []string{"b.example.com"}, Port: 8080}
+	internal := Spec{Image: "x"}
+	got := toJSONString(TraefikConfig(cfg, []string{"acme", "b", "c"}, []*Spec{&s, &always, &internal}))
+	for _, want := range []string{
+		`"apperator-acme":{"entryPoints":["websecure"],"middlewares":["apperator-acme-sablier"],"rule":"Host(` + "`acme.example.com`) || Host(`sign.acme.com`)" + `","service":"apperator-acme","tls":{"certResolver":"letsencrypt"}}`,
+		`"apperator-acme":{"loadBalancer":{"servers":[{"url":"http://apperator-acme:3000"}]}}`,
+		`"apperator-acme-sablier":{"plugin":{"sablier":{"blocking":{"timeout":"30s"},"group":"apperator-acme","sablierUrl":"http://sablier:10000","sessionDuration":"15m"}}}`,
+		`"apperator-b":{"entryPoints":["websecure"],"rule":"Host(` + "`b.example.com`)" + `","service":"apperator-b","tls":{"certResolver":"letsencrypt"}}`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("config is missing %s\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "apperator-c") {
+		t.Errorf("an app without hostnames got a route: %s", got)
+	}
+	if got := toJSONString(TraefikConfig(cfg, nil, nil)); got != `{"http":{}}` {
+		t.Errorf("empty config: %s", got)
+	}
+	cfg.Router = "none"
+	if got := toJSONString(TraefikConfig(cfg, []string{"acme"}, []*Spec{&s})); got != `{"http":{}}` {
+		t.Errorf("router none must serve no routes: %s", got)
+	}
+}
+
+func toJSONString(v any) string {
+	b, _ := json.Marshal(v)
+	return string(b)
 }

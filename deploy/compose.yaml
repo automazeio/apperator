@@ -1,6 +1,6 @@
 # Apperator with Traefik (routing) and Sablier (idle stop and wake on request).
 #
-#   export APPERATOR_TOKEN=$(openssl rand -hex 32)
+#   export APPERATOR_TOKEN=$(openssl rand -hex 32) APPERATOR_TRAEFIK_TOKEN=$(openssl rand -hex 32)
 #   docker compose -f deploy/compose.yaml up -d
 #
 # For HTTPS, set APPERATOR_CERT_RESOLVER=letsencrypt and ACME_EMAIL, and open ports 80 and 443.
@@ -11,11 +11,11 @@ services:
     image: traefik:v3.7
     restart: unless-stopped
     command:
-      - --providers.docker=true
-      - --providers.docker.exposedbydefault=false
-      - --providers.docker.network=apperator
-      # Reload quickly when a sleeping app starts (the default is 2s).
-      - --providers.providersThrottleDuration=${TRAEFIK_THROTTLE:-200ms}
+      # Routes come from Apperator. They point at each app's name on the Docker network, so they
+      # don't change when an app sleeps or wakes. Traefik checks for new apps every second.
+      - --providers.http.endpoint=http://apperator:7070/traefik
+      - --providers.http.pollinterval=1s
+      - --providers.http.headers.Authorization=Bearer ${APPERATOR_TRAEFIK_TOKEN:?set APPERATOR_TRAEFIK_TOKEN, for example with openssl rand -hex 32}
       - --entrypoints.web.address=:80
       - --entrypoints.websecure.address=:443
       - --experimental.plugins.sablier.modulename=github.com/sablierapp/sablier-traefik-plugin
@@ -27,7 +27,6 @@ services:
       - "80:80"
       - "443:443"
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
       - letsencrypt:/letsencrypt
     networks: [apperator]
 
@@ -46,6 +45,7 @@ services:
     restart: unless-stopped
     environment:
       APPERATOR_TOKEN: ${APPERATOR_TOKEN:?set APPERATOR_TOKEN, for example with openssl rand -hex 32}
+      APPERATOR_TRAEFIK_TOKEN: ${APPERATOR_TRAEFIK_TOKEN}
       APPERATOR_SABLIER_URL: http://sablier:10000
       APPERATOR_ENTRYPOINTS: ${APPERATOR_ENTRYPOINTS:-websecure}
       APPERATOR_TLS: ${APPERATOR_TLS:-true}
@@ -53,7 +53,6 @@ services:
       APPERATOR_WEBHOOK_URL: ${APPERATOR_WEBHOOK_URL:-}
       APPERATOR_WEBHOOK_SECRET: ${APPERATOR_WEBHOOK_SECRET:-}
       APPERATOR_TICK: ${APPERATOR_TICK:-30s}
-      APPERATOR_READY_AFTER: ${APPERATOR_READY_AFTER:-500ms}
     ports:
       # The API. Keep it private: put it behind a VPN or a firewall, never on the open internet.
       - "127.0.0.1:7070:7070"

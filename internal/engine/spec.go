@@ -92,7 +92,7 @@ func (s *Spec) Validate(cfg *config.Config) error {
 			bad("idle_timeout must be at least 10s")
 		case cfg.SablierURL == "":
 			bad("idle_timeout needs Sablier: set APPERATOR_SABLIER_URL")
-		case cfg.Router != "traefik" || len(s.Hostnames) == 0:
+		case cfg.Router == "none" || len(s.Hostnames) == 0:
 			bad("idle_timeout needs hostnames and the Traefik router, so requests can wake the app")
 		}
 	}
@@ -195,48 +195,72 @@ func containerBody(cfg *config.Config, id string, s *Spec, imageID string) (map[
 	return body, hash
 }
 
-// routeLabels returns the Traefik and Sablier labels for an app.
+// routeLabels returns the labels Sablier needs to start and stop an app. Traefik's routes come
+// from TraefikConfig. "traefik.enable=false" keeps the app private from a Traefik that also
+// watches Docker with exposedByDefault on.
 func routeLabels(cfg *config.Config, id string, s *Spec) map[string]string {
-	if cfg.Router != "traefik" || len(s.Hostnames) == 0 {
-		return map[string]string{"traefik.enable": "false"}
-	}
-	r := cfg.Prefix + id
-	rules := make([]string, len(s.Hostnames))
-	for i, h := range s.Hostnames {
-		rules[i] = "Host(`" + h + "`)"
-	}
-	l := map[string]string{
-		"traefik.enable":                                           "true",
-		"traefik.docker.network":                                   cfg.Network,
-		"traefik.http.routers." + r + ".rule":                      strings.Join(rules, " || "),
-		"traefik.http.routers." + r + ".entrypoints":               cfg.Entrypoints,
-		"traefik.http.routers." + r + ".service":                   r,
-		"traefik.http.services." + r + ".loadbalancer.server.port": fmt.Sprint(s.Port),
-	}
-	if cfg.TLS {
-		l["traefik.http.routers."+r+".tls"] = "true"
-		if cfg.CertResolver != "" {
-			l["traefik.http.routers."+r+".tls.certresolver"] = cfg.CertResolver
-		}
-	}
-	if s.IdleTimeout != "" && cfg.SablierURL != "" {
-		m := r + "-sablier"
-		p := "traefik.http.middlewares." + m + ".plugin.sablier."
+	l := map[string]string{"traefik.enable": "false"}
+	if cfg.Router == "traefik" && len(s.Hostnames) > 0 && s.IdleTimeout != "" && cfg.SablierURL != "" {
 		l["sablier.enable"] = "true"
 		l["sablier.group"] = cfg.Prefix + id
-		l["traefik.docker.allownonrunning"] = "true"
-		if cfg.ReadyAfter > 0 {
-			// Traefik adds a started container to its route only on its next reload. Until then
-			// the plugin answers with a redirect to the same URL, so hold the request a little longer.
-			l["sablier.ready-after"] = cfg.ReadyAfter.String()
-		}
-		l[p+"sablierUrl"] = cfg.SablierURL
-		l[p+"group"] = cfg.Prefix + id
-		l[p+"sessionDuration"] = s.IdleTimeout
-		l[p+"blocking.timeout"] = cfg.BlockingLimit.String()
-		l["traefik.http.routers."+r+".middlewares"] = m + "@docker"
 	}
 	return l
+}
+
+func hostRule(hostnames []string) string {
+	rules := make([]string, len(hostnames))
+	for i, h := range hostnames {
+		rules[i] = "Host(`" + h + "`)"
+	}
+	return strings.Join(rules, " || ")
+}
+
+// TraefikConfig returns Traefik's dynamic configuration for every routed app, for Traefik's HTTP
+// provider. Each service points at the app's name on the Docker network, which never changes, so
+// Traefik doesn't reload when an app sleeps or wakes, and a waking request goes straight through.
+func TraefikConfig(cfg *config.Config, ids []string, specs []*Spec) map[string]any {
+	if cfg.Router != "traefik" {
+		return map[string]any{"http": map[string]any{}}
+	}
+	routers := map[string]any{}
+	services := map[string]any{}
+	middlewares := map[string]any{}
+	for i, id := range ids {
+		s := specs[i]
+		if len(s.Hostnames) == 0 || s.Port == 0 {
+			continue
+		}
+		r := cfg.Prefix + id
+		router := map[string]any{"rule": hostRule(s.Hostnames), "entryPoints": strings.Split(cfg.Entrypoints, ","), "service": r}
+		if cfg.TLS {
+			tls := map[string]any{}
+			if cfg.CertResolver != "" {
+				tls["certResolver"] = cfg.CertResolver
+			}
+			router["tls"] = tls
+		}
+		if s.IdleTimeout != "" && cfg.SablierURL != "" {
+			m := r + "-sablier"
+			middlewares[m] = map[string]any{"plugin": map[string]any{"sablier": map[string]any{
+				"sablierUrl":      cfg.SablierURL,
+				"group":           r,
+				"sessionDuration": s.IdleTimeout,
+				"blocking":        map[string]any{"timeout": cfg.BlockingLimit.String()},
+			}}}
+			router["middlewares"] = []string{m}
+		}
+		routers[r] = router
+		services[r] = map[string]any{"loadBalancer": map[string]any{"servers": []map[string]any{{"url": fmt.Sprintf("http://%s:%d", r, s.Port)}}}}
+	}
+	httpCfg := map[string]any{}
+	if len(routers) > 0 {
+		httpCfg["routers"] = routers
+		httpCfg["services"] = services
+	}
+	if len(middlewares) > 0 {
+		httpCfg["middlewares"] = middlewares
+	}
+	return map[string]any{"http": httpCfg}
 }
 
 func volumeName(cfg *config.Config, id string) string { return cfg.Prefix + id + "-data" }

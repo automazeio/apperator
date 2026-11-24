@@ -90,7 +90,7 @@ func serve() error {
 
 	srv := &http.Server{
 		Addr:              cfg.Listen,
-		Handler:           api.Handler(eng, cfg.Token, version, log),
+		Handler:           api.Handler(eng, cfg.Token, cfg.TraefikToken, version, log),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	errc := make(chan error, 1)

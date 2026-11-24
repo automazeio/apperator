@@ -1,6 +1,6 @@
 # API
 
-Every request except `GET /health` needs the header `Authorization: Bearer <APPERATOR_TOKEN>`. Requests and responses are JSON.
+Every request except `GET /health` and `GET /traefik` needs the header `Authorization: Bearer <APPERATOR_TOKEN>`. Requests and responses are JSON.
 
 | Method and path | Does |
 |---|---|
@@ -15,6 +15,7 @@ Every request except `GET /health` needs the header `Authorization: Bearer <APPE
 | `GET /v1/apps/{id}/logs?tail=100` | Returns the app's last output lines, as plain text. |
 | `DELETE /v1/apps/{id}` | Deletes the app and its container. Keeps its data. |
 | `DELETE /v1/apps/{id}/volume` | Deletes the data of a deleted app, for good. |
+| `GET /traefik` | Traefik's routes, for its HTTP provider. Needs `Authorization: Bearer <APPERATOR_TRAEFIK_TOKEN>`, which opens nothing else. |
 
 ## App IDs
 

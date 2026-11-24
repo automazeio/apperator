@@ -581,3 +581,19 @@ func (e *Engine) DeleteVolume(ctx context.Context, id string) error {
 	e.hooks.Send("app.volume_deleted", id, nil)
 	return nil
 }
+
+// TraefikConfig returns Traefik's dynamic configuration for every app, built from the stored specs.
+func (e *Engine) TraefikConfig() map[string]any {
+	recs := e.store.List()
+	ids := make([]string, 0, len(recs))
+	specs := make([]*Spec, 0, len(recs))
+	for _, rec := range recs {
+		var s Spec
+		if json.Unmarshal(rec.Spec, &s) != nil {
+			continue
+		}
+		ids = append(ids, rec.ID)
+		specs = append(specs, &s)
+	}
+	return TraefikConfig(e.cfg, ids, specs)
+}

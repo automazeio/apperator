@@ -18,13 +18,13 @@ type Config struct {
 	Network    string // APPERATOR_NETWORK: Docker network for apps, the proxy and Sablier, default "apperator"
 	Prefix     string // APPERATOR_PREFIX: container and volume name prefix, default "apperator-"
 
-	Router        string        // APPERATOR_ROUTER: "traefik" (default) or "none"
+	Router        string        // APPERATOR_ROUTER: "traefik" (routes served to Traefik at GET /traefik, default) or "none"
+	TraefikToken  string        // APPERATOR_TRAEFIK_TOKEN: bearer token Traefik sends to GET /traefik, required with the traefik router
 	Entrypoints   string        // APPERATOR_ENTRYPOINTS: Traefik entrypoints, default "websecure"
 	TLS           bool          // APPERATOR_TLS: mark routes as TLS, default true
 	CertResolver  string        // APPERATOR_CERT_RESOLVER: Traefik certificate resolver, optional
 	SablierURL    string        // APPERATOR_SABLIER_URL: for example "http://sablier:10000"; enables idle_timeout
 	BlockingLimit time.Duration // APPERATOR_SABLIER_TIMEOUT: how long a request waits for a sleeping app, default 30s
-	ReadyAfter    time.Duration // APPERATOR_READY_AFTER: extra wait after a woken app is up, so the proxy has its address, default 500ms
 
 	StartTimeout time.Duration // APPERATOR_START_TIMEOUT: how long a start may take to be healthy, default 60s
 	StopTimeout  int           // APPERATOR_STOP_TIMEOUT: seconds before a stopping app is killed, default 20
@@ -50,6 +50,7 @@ func FromEnv() (*Config, error) {
 		Network:       env("APPERATOR_NETWORK", "apperator"),
 		Prefix:        env("APPERATOR_PREFIX", "apperator-"),
 		Router:        env("APPERATOR_ROUTER", "traefik"),
+		TraefikToken:  os.Getenv("APPERATOR_TRAEFIK_TOKEN"),
 		Entrypoints:   env("APPERATOR_ENTRYPOINTS", "websecure"),
 		CertResolver:  os.Getenv("APPERATOR_CERT_RESOLVER"),
 		SablierURL:    strings.TrimRight(os.Getenv("APPERATOR_SABLIER_URL"), "/"),
@@ -71,8 +72,6 @@ func FromEnv() (*Config, error) {
 	add(err)
 	c.BlockingLimit, err = durationEnv("APPERATOR_SABLIER_TIMEOUT", 30*time.Second)
 	add(err)
-	c.ReadyAfter, err = durationEnv("APPERATOR_READY_AFTER", 500*time.Millisecond)
-	add(err)
 	c.SafetyWake, err = durationEnv("APPERATOR_SAFETY_WAKE", 24*time.Hour)
 	add(err)
 	c.Tick, err = durationEnv("APPERATOR_TICK", 30*time.Second)
@@ -89,6 +88,12 @@ func FromEnv() (*Config, error) {
 	}
 	if c.Router != "traefik" && c.Router != "none" {
 		errs = append(errs, `APPERATOR_ROUTER must be "traefik" or "none"`)
+	}
+	if c.Router == "traefik" && len(c.TraefikToken) < 32 {
+		errs = append(errs, "APPERATOR_TRAEFIK_TOKEN must be set, with at least 32 characters, for the traefik router (try: openssl rand -hex 32)")
+	}
+	if c.TraefikToken != "" && c.TraefikToken == c.Token {
+		errs = append(errs, "APPERATOR_TRAEFIK_TOKEN must differ from APPERATOR_TOKEN")
 	}
 	if c.WebhookURL != "" && c.WebhookSecret == "" {
 		errs = append(errs, "APPERATOR_WEBHOOK_SECRET is required with APPERATOR_WEBHOOK_URL")
