@@ -18,8 +18,8 @@ type Config struct {
 	Network    string // APPERATOR_NETWORK: Docker network for apps, the proxy and Sablier, default "apperator"
 	Prefix     string // APPERATOR_PREFIX: container and volume name prefix, default "apperator-"
 
-	Router        string        // APPERATOR_ROUTER: "traefik" (routes served to Traefik at GET /traefik, default) or "none"
-	TraefikToken  string        // APPERATOR_TRAEFIK_TOKEN: bearer token Traefik sends to GET /traefik, required with the traefik router
+	Router        string        // APPERATOR_ROUTER: "traefik" (routes written to RoutesFile, default) or "none"
+	RoutesFile    string        // APPERATOR_ROUTES_FILE: Traefik's routes, for its file provider, default "/routes/apperator.yml"
 	Entrypoints   string        // APPERATOR_ENTRYPOINTS: Traefik entrypoints, default "websecure"
 	TLS           bool          // APPERATOR_TLS: mark routes as TLS, default true
 	CertResolver  string        // APPERATOR_CERT_RESOLVER: Traefik certificate resolver, optional
@@ -36,6 +36,7 @@ type Config struct {
 	WebhookURL    string // APPERATOR_WEBHOOK_URL: where events are posted, optional
 	WebhookSecret string // APPERATOR_WEBHOOK_SECRET: signs events, required with a webhook URL
 
+	ProbeBinary  string // APPERATOR_PROBE_BINARY: a static Linux build of Apperator, copied into apps as their health probe; default this binary, "off" to turn it off
 	RegistryAuth string // APPERATOR_REGISTRY_AUTH: X-Registry-Auth value for private images, optional
 	LogFormat    string // APPERATOR_LOG_FORMAT: "text" (default) or "json"
 }
@@ -50,14 +51,21 @@ func FromEnv() (*Config, error) {
 		Network:       env("APPERATOR_NETWORK", "apperator"),
 		Prefix:        env("APPERATOR_PREFIX", "apperator-"),
 		Router:        env("APPERATOR_ROUTER", "traefik"),
-		TraefikToken:  os.Getenv("APPERATOR_TRAEFIK_TOKEN"),
+		RoutesFile:    env("APPERATOR_ROUTES_FILE", "/routes/apperator.yml"),
 		Entrypoints:   env("APPERATOR_ENTRYPOINTS", "websecure"),
 		CertResolver:  os.Getenv("APPERATOR_CERT_RESOLVER"),
 		SablierURL:    strings.TrimRight(os.Getenv("APPERATOR_SABLIER_URL"), "/"),
 		WebhookURL:    os.Getenv("APPERATOR_WEBHOOK_URL"),
 		WebhookSecret: os.Getenv("APPERATOR_WEBHOOK_SECRET"),
+		ProbeBinary:   os.Getenv("APPERATOR_PROBE_BINARY"),
 		RegistryAuth:  os.Getenv("APPERATOR_REGISTRY_AUTH"),
 		LogFormat:     env("APPERATOR_LOG_FORMAT", "text"),
+	}
+	switch c.ProbeBinary {
+	case "off":
+		c.ProbeBinary = ""
+	case "":
+		c.ProbeBinary, _ = os.Executable()
 	}
 	var errs []string
 	add := func(err error) {
@@ -89,11 +97,8 @@ func FromEnv() (*Config, error) {
 	if c.Router != "traefik" && c.Router != "none" {
 		errs = append(errs, `APPERATOR_ROUTER must be "traefik" or "none"`)
 	}
-	if c.Router == "traefik" && len(c.TraefikToken) < 32 {
-		errs = append(errs, "APPERATOR_TRAEFIK_TOKEN must be set, with at least 32 characters, for the traefik router (try: openssl rand -hex 32)")
-	}
-	if c.TraefikToken != "" && c.TraefikToken == c.Token {
-		errs = append(errs, "APPERATOR_TRAEFIK_TOKEN must differ from APPERATOR_TOKEN")
+	if c.Router == "traefik" && !strings.HasSuffix(c.RoutesFile, ".yml") && !strings.HasSuffix(c.RoutesFile, ".yaml") {
+		errs = append(errs, "APPERATOR_ROUTES_FILE must end in .yml or .yaml, or Traefik ignores it")
 	}
 	if c.WebhookURL != "" && c.WebhookSecret == "" {
 		errs = append(errs, "APPERATOR_WEBHOOK_SECRET is required with APPERATOR_WEBHOOK_URL")

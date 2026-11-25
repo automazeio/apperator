@@ -170,14 +170,12 @@ func containerBody(cfg *config.Config, id string, s *Spec, imageID string) (map[
 		host["Mounts"] = []map[string]any{{"Type": "volume", "Source": volumeName(cfg, id), "Target": s.DataPath}}
 	}
 	body := map[string]any{
-		"Image":       s.Image,
-		"Env":         env,
-		"Labels":      labels,
-		"StopTimeout": cfg.StopTimeout,
-		"HostConfig":  host,
-		// Keep the image's own health check, but run it every 250ms while the app starts. Docker's
-		// default is 5s, and Sablier holds a waking request until the container is healthy.
-		"Healthcheck":      map[string]any{"StartInterval": int64(250 * time.Millisecond), "StartPeriod": int64(cfg.StartTimeout)},
+		"Image":            s.Image,
+		"Env":              env,
+		"Labels":           labels,
+		"StopTimeout":      cfg.StopTimeout,
+		"HostConfig":       host,
+		"Healthcheck":      healthcheck(cfg, s),
 		"NetworkingConfig": map[string]any{"EndpointsConfig": map[string]any{cfg.Network: map[string]any{"Aliases": []string{name}}}},
 	}
 	if len(s.Command) > 0 {
@@ -205,6 +203,22 @@ func routeLabels(cfg *config.Config, id string, s *Spec) map[string]string {
 		l["sablier.group"] = cfg.Prefix + id
 	}
 	return l
+}
+
+// healthcheck returns Docker's health check for an app. Sablier holds a waking request until the
+// container is healthy, so the check decides when the first request goes through. With health_path,
+// Apperator's own probe (copied in by ensureContainer) checks it: it starts in milliseconds and works
+// in any image. Otherwise the image's own check stays. Either way it runs every 250ms while the app
+// starts, instead of Docker's 5s.
+func healthcheck(cfg *config.Config, s *Spec) map[string]any {
+	hc := map[string]any{"StartInterval": int64(250 * time.Millisecond), "StartPeriod": int64(cfg.StartTimeout)}
+	if s.HealthPath != "" && cfg.ProbeBinary != "" {
+		hc["Test"] = []string{"CMD", ProbePath, "probe", fmt.Sprintf("http://127.0.0.1:%d%s", s.Port, s.HealthPath)}
+		hc["Interval"] = int64(30 * time.Second)
+		hc["Timeout"] = int64(3 * time.Second)
+		hc["Retries"] = 3
+	}
+	return hc
 }
 
 func hostRule(hostnames []string) string {

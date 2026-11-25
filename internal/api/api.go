@@ -27,12 +27,10 @@ type Apps interface {
 	Logs(ctx context.Context, id string, tail int) (string, error)
 	Delete(ctx context.Context, id string) error
 	DeleteVolume(ctx context.Context, id string) error
-	TraefikConfig() map[string]any
 }
 
 // Handler returns the API. Every route except GET /health needs "Authorization: Bearer <token>".
-// GET /traefik serves Traefik's routes, with its own token (traefikToken), and is off when that is empty.
-func Handler(apps Apps, token, traefikToken, version string, log *slog.Logger) http.Handler {
+func Handler(apps Apps, token, version string, log *slog.Logger) http.Handler {
 	h := &handler{apps: apps, log: log}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
@@ -53,14 +51,7 @@ func Handler(apps Apps, token, traefikToken, version string, log *slog.Logger) h
 	})
 
 	want := []byte("Bearer " + token)
-	wantTraefik := []byte("Bearer " + traefikToken)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/traefik" && r.Method == http.MethodGet && traefikToken != "" &&
-			subtle.ConstantTimeCompare([]byte(r.Header.Get("Authorization")), wantTraefik) == 1 {
-			// Read-only and limited to routes, so Traefik never holds the API token.
-			writeJSON(w, http.StatusOK, apps.TraefikConfig())
-			return
-		}
 		if r.URL.Path != "/health" && subtle.ConstantTimeCompare([]byte(r.Header.Get("Authorization")), want) != 1 {
 			w.Header().Set("WWW-Authenticate", "Bearer")
 			writeError(w, http.StatusUnauthorized, "unauthorized", "a valid bearer token is required", nil)

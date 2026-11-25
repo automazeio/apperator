@@ -93,7 +93,10 @@ func New(host string) (*Client, error) {
 
 func (c *Client) do(ctx context.Context, hc *http.Client, method, path string, query url.Values, body any, header http.Header) (*http.Response, error) {
 	var r io.Reader
-	if body != nil {
+	raw, isRaw := body.(io.Reader)
+	if isRaw {
+		r = raw
+	} else if body != nil {
 		b, err := json.Marshal(body)
 		if err != nil {
 			return nil, err
@@ -108,7 +111,7 @@ func (c *Client) do(ctx context.Context, hc *http.Client, method, path string, q
 	if err != nil {
 		return nil, err
 	}
-	if body != nil {
+	if body != nil && !isRaw {
 		req.Header.Set("Content-Type", "application/json")
 	}
 	for k, v := range header {
@@ -327,6 +330,36 @@ func (c *Client) ReadFile(ctx context.Context, id, path string, max int64) ([]by
 			return io.ReadAll(io.LimitReader(tr, max))
 		}
 	}
+}
+
+// PutFile writes one file into a container, running or not, creating its folders. The file and
+// its folders belong to root.
+func (c *Client) PutFile(ctx context.Context, id, path string, data []byte, mode int64) error {
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	name := strings.TrimPrefix(path, "/")
+	parts := strings.Split(name, "/")
+	for i := 1; i < len(parts); i++ {
+		if err := tw.WriteHeader(&tar.Header{Typeflag: tar.TypeDir, Name: strings.Join(parts[:i], "/") + "/", Mode: 0o755}); err != nil {
+			return err
+		}
+	}
+	if err := tw.WriteHeader(&tar.Header{Typeflag: tar.TypeReg, Name: name, Mode: mode, Size: int64(len(data))}); err != nil {
+		return err
+	}
+	if _, err := tw.Write(data); err != nil {
+		return err
+	}
+	if err := tw.Close(); err != nil {
+		return err
+	}
+	res, err := c.do(ctx, c.http, http.MethodPut, "/containers/"+url.PathEscape(id)+"/archive", url.Values{"path": {"/"}}, &buf,
+		http.Header{"Content-Type": {"application/x-tar"}})
+	if err != nil {
+		return err
+	}
+	_, _ = io.Copy(io.Discard, res.Body)
+	return res.Body.Close()
 }
 
 // ExecResult is the outcome of a command run in a container.

@@ -18,6 +18,8 @@ func (e *Engine) RunScheduler(ctx context.Context) {
 	t := time.NewTicker(e.cfg.Tick)
 	defer t.Stop()
 	for {
+		// Retries a routes file that couldn't be written, and picks up a file someone removed.
+		e.syncRoutesLogged()
 		e.checkWakes(ctx, time.Now())
 		select {
 		case <-ctx.Done():
@@ -127,6 +129,7 @@ func ParseWakeTime(s string) time.Time {
 }
 
 func (e *Engine) wake(ctx context.Context, id, reason string) {
+	defer e.recoverPanic("wake " + id)
 	unlock := e.lock(id)
 	rec, err := e.store.Get(id)
 	if err != nil || rec.Held {

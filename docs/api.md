@@ -1,6 +1,6 @@
 # API
 
-Every request except `GET /health` and `GET /traefik` needs the header `Authorization: Bearer <APPERATOR_TOKEN>`. Requests and responses are JSON.
+Every request except `GET /health` needs the header `Authorization: Bearer <APPERATOR_TOKEN>`. Requests and responses are JSON.
 
 | Method and path | Does |
 |---|---|
@@ -15,7 +15,6 @@ Every request except `GET /health` and `GET /traefik` needs the header `Authoriz
 | `GET /v1/apps/{id}/logs?tail=100` | Returns the app's last output lines, as plain text. |
 | `DELETE /v1/apps/{id}` | Deletes the app and its container. Keeps its data. |
 | `DELETE /v1/apps/{id}/volume` | Deletes the data of a deleted app, for good. |
-| `GET /traefik` | Traefik's routes, for its HTTP provider. Needs `Authorization: Bearer <APPERATOR_TRAEFIK_TOKEN>`, which opens nothing else. |
 
 ## App IDs
 
@@ -33,7 +32,7 @@ The body of `PUT /v1/apps/{id}`. Only `image` is required.
 | `command` | `["node", "server.js"]` | Replaces the image's command. |
 | `hostnames` | `["acme.example.com"]` | Hostnames Traefik routes to the app. Needs `port`. |
 | `port` | `3000` | The port the app listens on. |
-| `health_path` | `"/health"` | Apperator waits until a `GET` on this path answers with a status below 400. Without it, an app counts as started once it has run for a second. |
+| `health_path` | `"/health"` | Apperator waits until a `GET` on this path answers with a status below 400. It also becomes the container's Docker health check, so a request that wakes the app waits for it too. Apperator copies its own small binary into the container (`/.apperator/probe`) to run the check, so it works in any image and replaces the image's own check. Without it, an app counts as started once it has run for a second, and a waking request goes through as soon as the container runs, unless the image has its own health check. Set it for every app with an idle timeout. |
 | `data_path` | `"/data"` | Where the app's volume is mounted. The volume survives recreates and deletes. |
 | `memory_mb` | `384` | Memory limit, with no swap. |
 | `cpus` | `0.5` | CPU limit, in cores. |

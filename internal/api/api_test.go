@@ -63,10 +63,6 @@ func (f *fake) DeleteVolume(_ context.Context, id string) error {
 	return nil
 }
 
-func (f *fake) TraefikConfig() map[string]any { return map[string]any{"http": map[string]any{}} }
-
-const traefikToken = "traefik-token-traefik-token-traefik-token"
-
 func call(t *testing.T, h http.Handler, method, path, body string, auth bool) (int, map[string]any) {
 	t.Helper()
 	req := httptest.NewRequest(method, path, strings.NewReader(body))
@@ -85,28 +81,7 @@ func call(t *testing.T, h http.Handler, method, path, body string, auth bool) (i
 }
 
 func TestAPI(t *testing.T) {
-	h := Handler(&fake{apps: map[string]*engine.App{}}, token, traefikToken, "test", slog.New(slog.NewTextHandler(io.Discard, nil)))
-
-	// GET /traefik takes only its own token, and the Traefik token opens nothing else.
-	for _, c := range []struct {
-		path, auth string
-		want       int
-	}{
-		{"/traefik", traefikToken, 200},
-		{"/traefik", token, 404},
-		{"/traefik", "", 401},
-		{"/v1/apps", traefikToken, 401},
-	} {
-		req := httptest.NewRequest("GET", c.path, nil)
-		if c.auth != "" {
-			req.Header.Set("Authorization", "Bearer "+c.auth)
-		}
-		rec := httptest.NewRecorder()
-		h.ServeHTTP(rec, req)
-		if rec.Code != c.want {
-			t.Errorf("GET %s with %q: %d, want %d", c.path, c.auth, rec.Code, c.want)
-		}
-	}
+	h := Handler(&fake{apps: map[string]*engine.App{}}, token, "test", slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	if code, body := call(t, h, "GET", "/health", "", false); code != 200 || body["version"] != "test" {
 		t.Errorf("health: %d %v", code, body)

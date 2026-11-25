@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"runtime/debug"
 	"sort"
 	"strings"
 	"sync"
@@ -30,6 +31,10 @@ type Engine struct {
 	log      *slog.Logger
 	http     *http.Client
 	starting chan struct{}
+	probe    []byte // the health probe binary, or nil
+
+	routesMu   sync.Mutex
+	routesLast []byte // what syncRoutes last wrote
 
 	locksMu sync.Mutex
 	locks   map[string]*sync.Mutex
@@ -62,6 +67,19 @@ func New(cfg *config.Config, d *docker.Client, s *store.Store, hooks *webhook.Se
 func (e *Engine) Init(ctx context.Context) error {
 	if err := e.docker.Ping(ctx); err != nil {
 		return fmt.Errorf("cannot reach Docker: %w", err)
+	}
+	if e.cfg.ProbeBinary != "" {
+		probe, err := LoadProbe(e.cfg.ProbeBinary)
+		if err != nil {
+			// Apps still start; those whose image has no health check may get requests before they listen.
+			e.log.Warn("health_path checks only run when Apperator starts an app, not when a request wakes it", "reason", err)
+			e.cfg.ProbeBinary = ""
+		} else {
+			e.probe = probe
+		}
+	}
+	if err := e.syncRoutes(); err != nil {
+		return err
 	}
 	return e.docker.EnsureNetwork(ctx, e.cfg.Network, map[string]string{labelManaged: "true"})
 }
@@ -131,6 +149,13 @@ func (e *Engine) lock(id string) func() {
 	return m.Unlock
 }
 
+// recoverPanic logs a panic in a background task instead of letting it end the process.
+func (e *Engine) recoverPanic(where string) {
+	if r := recover(); r != nil {
+		e.log.Error("recovered from a panic", "in", where, "panic", fmt.Sprint(r), "stack", string(debug.Stack()))
+	}
+}
+
 func (e *Engine) name(id string) string { return e.cfg.Prefix + id }
 
 // Apply creates the app or changes it to match spec, starts it and waits until it is healthy.
@@ -154,6 +179,8 @@ func (e *Engine) Apply(ctx context.Context, id string, spec Spec) (*App, bool, e
 	if err := e.store.Put(store.Record{ID: id, Spec: raw}); err != nil {
 		return nil, false, err
 	}
+	// Route the app once its container exists, whether or not it starts, as the spec now says.
+	defer e.syncRoutesLogged()
 	changed, err := e.ensureContainer(ctx, id, &spec, imageID)
 	if err == nil {
 		err = e.start(ctx, id, &spec)
@@ -221,8 +248,15 @@ func (e *Engine) ensureContainer(ctx context.Context, id string, spec *Spec, ima
 		}
 		replaced = true
 	}
-	if _, err := e.docker.Create(ctx, name, body); err != nil {
+	cid, err := e.docker.Create(ctx, name, body)
+	if err != nil {
 		return replaced, err
+	}
+	if e.probe != nil && spec.HealthPath != "" {
+		if err := e.docker.PutFile(ctx, cid, ProbePath, e.probe, 0o755); err != nil {
+			_ = e.docker.Remove(ctx, cid)
+			return replaced, fmt.Errorf("copy the health probe: %w", err)
+		}
 	}
 	return replaced, nil
 }
@@ -548,6 +582,7 @@ func (e *Engine) Delete(ctx context.Context, id string) error {
 	if err := e.store.Delete(id); err != nil {
 		return err
 	}
+	e.syncRoutesLogged()
 	e.wakeMu.Lock()
 	delete(e.wakes, id)
 	e.wakeMu.Unlock()
@@ -580,20 +615,4 @@ func (e *Engine) DeleteVolume(ctx context.Context, id string) error {
 	}
 	e.hooks.Send("app.volume_deleted", id, nil)
 	return nil
-}
-
-// TraefikConfig returns Traefik's dynamic configuration for every app, built from the stored specs.
-func (e *Engine) TraefikConfig() map[string]any {
-	recs := e.store.List()
-	ids := make([]string, 0, len(recs))
-	specs := make([]*Spec, 0, len(recs))
-	for _, rec := range recs {
-		var s Spec
-		if json.Unmarshal(rec.Spec, &s) != nil {
-			continue
-		}
-		ids = append(ids, rec.ID)
-		specs = append(specs, &s)
-	}
-	return TraefikConfig(e.cfg, ids, specs)
 }
