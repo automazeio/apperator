@@ -1,8 +1,16 @@
 # Apperator
 
-**One container per customer, and you only pay for the ones in use.**
+**Give every customer their own instance of your app, without paying for hundreds of idle servers.**
 
-Apperator runs hundreds of copies of your app on one server, one per customer, and puts the idle ones to sleep. A sleeping app uses no memory and no CPU. When a request comes in, it wakes up and answers, and the client just sees a slow first response. No redirect, no "starting…" page, no lost request.
+Say you've built an app that ships as a Docker image, and now you want to sell it as a hosted service. You have two choices. Rewrite it as a multi-tenant SaaS, with a tenant ID on every query and one bug away from showing one customer another customer's data. Or run one copy per customer, which is simple and safe, until you notice that 300 customers means 300 containers sitting in memory, mostly doing nothing.
+
+Apperator makes the second choice cheap. It runs one container per customer on your own server, and puts the idle ones to sleep. A sleeping app uses no memory and no CPU. When a request comes in, it wakes up and answers, and the visitor just sees a slow first response. No redirect, no "starting…" page, no lost request.
+
+It's for developers who want to:
+
+- **Host their open-source or self-hosted app as a paid service**, running the same image their users run.
+- **Give each customer real isolation**: their own process, database, volume and subdomain.
+- **Run many small, mostly idle apps** (per-customer instances, per-team tools, demo and preview environments) on one modest server.
 
 You talk to it with one REST call. Send an image, some environment variables and a hostname, and Apperator does the rest: the container, the route, the TLS certificate, the volume, the health check, the idle stop, the wake-up.
 
@@ -35,13 +43,9 @@ The call returns once `/health` answers, and `https://acme.example.com` is live.
 
 Measured on a 2-core cloud server. Your wake time is mostly your app's boot time.
 
-## Why
+## Why one container per customer
 
-One container per customer is the simplest safe way to run a SaaS. Each customer gets their own process, their own database and their own volume. A bug can't leak one customer's data to another, deleting a customer is deleting a volume, and if you also offer a self-hosted version, your hosted service runs the very same image.
-
-The catch is memory. Most customers are idle most of the time, and an idle container still holds 50–150 MB. A few hundred of them fill a server that does almost nothing.
-
-Apperator removes the catch. Idle apps sleep and cost only disk. A small server can hold hundreds of customers, as long as the ones awake at the same moment fit in memory.
+Each customer gets their own process, database and volume. A bug can't leak one customer's data to another, deleting a customer means deleting one volume, and your hosted service runs the very same image your self-hosters run. The only real cost was memory: an idle container still holds 50–150 MB. Apperator removes that cost, so a small server can hold hundreds of customers as long as the ones awake at the same moment fit in memory.
 
 ### Why not…
 
