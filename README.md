@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="banner.webp" width="100%" alt="The simple way to turn open-source apps into SaaS. No fork required.">
+</p>
+
 # Apperator
 
 **Give every customer their own instance of your app, without paying for hundreds of idle servers.**
