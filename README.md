@@ -1,8 +1,10 @@
 # Apperator
 
-Apperator runs apps in Docker containers on your own server, behind a small REST API. You send it an image, environment variables and a hostname. It creates the container, routes the hostname to it, keeps its data, stops it when nobody uses it, and starts it again on the next request or when the app asks to be woken.
+**One container per customer, and you only pay for the ones in use.**
 
-It is built for running many copies of the same app, one per customer, on one machine: SaaS products where each customer gets their own instance.
+Apperator runs hundreds of copies of your app on one server, one per customer, and puts the idle ones to sleep. A sleeping app uses no memory and no CPU. When a request comes in, it wakes up and answers, and the client just sees a slow first response. No redirect, no "starting…" page, no lost request.
+
+You talk to it with one REST call. Send an image, some environment variables and a hostname, and Apperator does the rest: the container, the route, the TLS certificate, the volume, the health check, the idle stop, the wake-up.
 
 ```bash
 curl -X PUT http://127.0.0.1:7070/v1/apps/acme \
@@ -21,33 +23,68 @@ curl -X PUT http://127.0.0.1:7070/v1/apps/acme \
   }'
 ```
 
-The call returns when `/health` answers. `acme.example.com` now reaches the app. After 15 minutes without requests the container stops and uses no memory. The next request starts it again in under a second.
+The call returns once `/health` answers, and `https://acme.example.com` is live. After 15 quiet minutes the container stops. The next visitor wakes it.
+
+| | |
+|---|---|
+| Memory of a sleeping app | **0 MB** |
+| First request to a sleeping app | **~2.2 s** for a Node.js app that boots in 1.6 s |
+| New app reachable after `PUT` | **~0.3 s** |
+| Apperator itself | **~10 MB** image, **~12 MB** of memory, one static Go binary |
+| Apps keep working while Apperator is down | **Yes** |
+
+Measured on a 2-core cloud server. Your wake time is mostly your app's boot time.
 
 ## Why
 
-Running one container per customer is simple and safe: no shared database, no noisy neighbours inside one process, and a customer's data is one volume. The hard part is running hundreds of them. Most of them are idle most of the time, and an idle container still uses 50–150 MB of memory.
+One container per customer is the simplest safe way to run a SaaS. Each customer gets their own process, their own database and their own volume. A bug can't leak one customer's data to another, deleting a customer is deleting a volume, and if you also offer a self-hosted version, your hosted service runs the very same image.
 
-Apperator stops idle apps and wakes them when they are needed. It is a thin layer over tools that already do their part well:
+The catch is memory. Most customers are idle most of the time, and an idle container still holds 50–150 MB. A few hundred of them fill a server that does almost nothing.
+
+Apperator removes the catch. Idle apps sleep and cost only disk. A small server can hold hundreds of customers, as long as the ones awake at the same moment fit in memory.
+
+### Why not…
+
+- **Kubernetes with Knative** scales to zero too, but you have to run Kubernetes. Apperator needs Docker and nothing else.
+- **A hosted platform with auto-stop** works until you want your own servers, your own region or your own bill.
+- **A PaaS like Dokku or Coolify** deploys apps well, but it's built for a handful of long-running apps, not hundreds of sleeping copies managed by your code.
+
+## How it fits together
+
+Apperator doesn't proxy traffic or start containers itself on the request path. It sets things up and steps aside. Proven tools do the live work:
+
+```mermaid
+flowchart LR
+  you["Your control plane"] -- REST --> A["Apperator"]
+  A -- creates containers --> D[("Docker")]
+  A -- writes routes file --> T["Traefik"]
+  user["Visitor"] --> T
+  T -- "app asleep?" --> S["Sablier"]
+  S -- starts --> D
+  T --> app["apperator-acme"]
+```
 
 - **Docker** runs the containers.
-- **[Traefik](https://traefik.io)** routes each hostname to its container.
+- **[Traefik](https://traefik.io)** routes each hostname to its container and gets the certificates.
 - **[Sablier](https://github.com/sablierapp/sablier)** stops idle containers and holds the first request while a sleeping one starts.
+- **Apperator** gives you the API, writes Traefik's routes, sets up Sablier and the health checks, wakes apps on schedule, limits how many start at once, and sends webhooks.
 
-Apperator adds what's missing: an API to create and change apps, Traefik's routes and Sablier's labels, health checks, scheduled wake-ups, a cap on how many apps start at once, and webhooks.
+Because of that split, Apperator can restart, crash or be upgraded and your customers won't notice. See [When Apperator is down](#when-apperator-is-down).
 
-It knows nothing about your customers, plans or billing. Your own control plane calls the API.
+It knows nothing about your customers, plans or billing. Your own code calls the API and keeps that logic.
 
 ## Features
 
 - **Declarative.** `PUT` the app you want. Apperator creates the container, or recreates it when the image or settings changed. The same request twice changes nothing.
-- **Data survives.** Each app has a named volume, kept when the container is recreated or the app is deleted. Deleting the data is a separate call.
-- **Scale to zero.** With `idle_timeout`, Sablier stops the app after that long without requests and starts it on the next one.
-- **Exact wake-ups.** A sleeping app can't run its own timers. With `wake_file`, the app writes the next time it has work (an RFC 3339 time) to a file in its data folder. Apperator reads it from the stopped container and starts the app at that time. As a safety net, sleeping apps also wake once a day.
-- **Safe starts.** Apps start a few at a time (`APPERATOR_MAX_STARTING`), so a reboot or a burst of wake-ups can't use up the host's memory. Apps with an idle timeout don't restart on their own after a reboot: they wait for a request.
-- **Health checks.** `PUT` and `start` wait until `health_path` answers, and so does a request that wakes a sleeping app. Apperator checks it with its own small binary inside the container, so this works in any image. If the app exits or never gets healthy, the error includes its last log lines.
-- **One-off commands.** `POST /v1/apps/{id}/exec` runs a command in the app, starting it first if it is asleep.
+- **Data survives.** Each app has a named volume, kept when the container is recreated or the app is deleted. Deleting the data is a separate, explicit call.
+- **Scale to zero.** With `idle_timeout`, the app stops after that long without requests and starts on the next one.
+- **Exact wake-ups.** A sleeping app can't run its own timers, so reminders and scheduled jobs would wait forever. With `wake_file`, the app writes the next time it has work (an RFC 3339 time) to a file in its data folder. Apperator reads it from the stopped container and wakes the app on time. As a safety net, sleeping apps also wake once a day.
+- **Health checks in any image.** With `health_path`, Apperator copies its own tiny probe into the container and makes it Docker's health check. It works even in images without `curl`, and a waking request only goes through once the app really answers. If the app exits or never gets healthy, the error includes its last log lines.
+- **No wake storms.** Apps start a few at a time (`APPERATOR_MAX_STARTING`), so a reboot or a burst of wake-ups can't use up the host's memory. Sleeping apps don't all start after a reboot: they wait for a request.
+- **One-off commands.** `POST /v1/apps/{id}/exec` runs a command in the app, waking it first if needed. Handy for migrations and setup scripts.
 - **Webhooks.** Signed events when apps are created, started, stopped, run out of memory, fail to start or are deleted.
-- **Small.** One static Go binary with no dependencies outside the standard library. The image is about 10 MB and uses about 12 MB of memory.
+- **Clean goodbyes.** `APPERATOR_FALLBACK_URL` sends visitors of a deleted app's hostname somewhere useful instead of an error.
+- **Small.** One static Go binary, standard library only.
 
 ## Quick start
 
@@ -61,7 +98,7 @@ export ACME_EMAIL=you@example.com APPERATOR_CERT_RESOLVER=letsencrypt
 docker compose -f deploy/compose.yaml up -d
 ```
 
-This starts Traefik on ports 80 and 443 (with Let's Encrypt certificates), Sablier, and Apperator. The API listens on `127.0.0.1:7070`. Keep it private: reach it over a VPN or an SSH tunnel, never from the open internet.
+That's it. This starts Traefik on ports 80 and 443 (with Let's Encrypt certificates), Sablier and Apperator. The API listens on `127.0.0.1:7070`. Keep it private: reach it over a VPN or an SSH tunnel, never from the open internet.
 
 Then create an app with the `curl` call above. See [docs/api.md](docs/api.md) for every endpoint and field.
 
