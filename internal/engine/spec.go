@@ -266,10 +266,24 @@ func TraefikConfig(cfg *config.Config, ids []string, specs []*Spec) map[string]a
 		routers[r] = router
 		services[r] = map[string]any{"loadBalancer": map[string]any{"servers": []map[string]any{{"url": fmt.Sprintf("http://%s:%d", r, s.Port)}}}}
 	}
+	// Hostnames with no app (a deleted one, or a typo) redirect to the fallback URL. Priority 1 puts
+	// this router after every app's, and Traefik's own noop service answers nothing itself.
+	if cfg.FallbackURL != "" {
+		router := map[string]any{"rule": "HostRegexp(`^.+$`)", "priority": 1, "entryPoints": strings.Split(cfg.Entrypoints, ","), "middlewares": []string{"apperator-fallback"}, "service": "noop@internal"}
+		if cfg.TLS {
+			// No certificate resolver: ACME can't issue for a pattern. Traefik uses a matching
+			// certificate it already has (a wildcard), or its default one.
+			router["tls"] = map[string]any{}
+		}
+		routers["apperator-fallback"] = router
+		middlewares["apperator-fallback"] = map[string]any{"redirectRegex": map[string]any{"regex": "^.*$", "replacement": cfg.FallbackURL}}
+	}
 	httpCfg := map[string]any{}
+	if len(services) > 0 {
+		httpCfg["services"] = services
+	}
 	if len(routers) > 0 {
 		httpCfg["routers"] = routers
-		httpCfg["services"] = services
 	}
 	if len(middlewares) > 0 {
 		httpCfg["middlewares"] = middlewares

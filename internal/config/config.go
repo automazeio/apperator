@@ -25,6 +25,7 @@ type Config struct {
 	CertResolver  string        // APPERATOR_CERT_RESOLVER: Traefik certificate resolver, optional
 	SablierURL    string        // APPERATOR_SABLIER_URL: for example "http://sablier:10000"; enables idle_timeout
 	BlockingLimit time.Duration // APPERATOR_SABLIER_TIMEOUT: how long a request waits for a sleeping app, default 30s
+	FallbackURL   string        // APPERATOR_FALLBACK_URL: where requests for a hostname with no app are redirected, optional
 
 	StartTimeout time.Duration // APPERATOR_START_TIMEOUT: how long a start may take to be healthy, default 60s
 	StopTimeout  int           // APPERATOR_STOP_TIMEOUT: seconds before a stopping app is killed, default 20
@@ -55,6 +56,7 @@ func FromEnv() (*Config, error) {
 		Entrypoints:   env("APPERATOR_ENTRYPOINTS", "websecure"),
 		CertResolver:  os.Getenv("APPERATOR_CERT_RESOLVER"),
 		SablierURL:    strings.TrimRight(os.Getenv("APPERATOR_SABLIER_URL"), "/"),
+		FallbackURL:   os.Getenv("APPERATOR_FALLBACK_URL"),
 		WebhookURL:    os.Getenv("APPERATOR_WEBHOOK_URL"),
 		WebhookSecret: os.Getenv("APPERATOR_WEBHOOK_SECRET"),
 		ProbeBinary:   os.Getenv("APPERATOR_PROBE_BINARY"),
@@ -99,6 +101,9 @@ func FromEnv() (*Config, error) {
 	}
 	if c.Router == "traefik" && !strings.HasSuffix(c.RoutesFile, ".yml") && !strings.HasSuffix(c.RoutesFile, ".yaml") {
 		errs = append(errs, "APPERATOR_ROUTES_FILE must end in .yml or .yaml, or Traefik ignores it")
+	}
+	if c.FallbackURL != "" && !strings.HasPrefix(c.FallbackURL, "https://") && !strings.HasPrefix(c.FallbackURL, "http://") {
+		errs = append(errs, "APPERATOR_FALLBACK_URL must start with https:// or http://")
 	}
 	if c.WebhookURL != "" && c.WebhookSecret == "" {
 		errs = append(errs, "APPERATOR_WEBHOOK_SECRET is required with APPERATOR_WEBHOOK_URL")

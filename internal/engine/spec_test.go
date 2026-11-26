@@ -180,6 +180,19 @@ func TestTraefikConfig(t *testing.T) {
 	if got := toJSONString(TraefikConfig(cfg, nil, nil)); got != `{"http":{}}` {
 		t.Errorf("empty config: %s", got)
 	}
+	cfg.FallbackURL = "https://example.com/"
+	got = toJSONString(TraefikConfig(cfg, nil, nil))
+	for _, want := range []string{
+		`"apperator-fallback":{"entryPoints":["websecure"],"middlewares":["apperator-fallback"],"priority":1,"rule":"HostRegexp(` + "`^.+$`)" + `","service":"noop@internal","tls":{}}`,
+		`"apperator-fallback":{"redirectRegex":{"regex":"^.*$","replacement":"https://example.com/"}}`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("fallback config is missing %s\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, `"services"`) {
+		t.Errorf("the fallback alone needs no services: %s", got)
+	}
 	cfg.Router = "none"
 	if got := toJSONString(TraefikConfig(cfg, []string{"acme"}, []*Spec{&s})); got != `{"http":{}}` {
 		t.Errorf("router none must serve no routes: %s", got)

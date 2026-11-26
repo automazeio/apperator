@@ -102,6 +102,7 @@ Apperator reads its settings from environment variables.
 | `APPERATOR_ENTRYPOINTS` | `websecure` | Traefik entrypoints for app routes. |
 | `APPERATOR_TLS` | `true` | Serve app routes over TLS. |
 | `APPERATOR_CERT_RESOLVER` | – | Traefik certificate resolver, for example `letsencrypt`. |
+| `APPERATOR_FALLBACK_URL` | – | Where requests for a hostname with no app are redirected, for example a deleted app's old address. Off when empty. HTTPS needs a certificate Traefik already has, such as a wildcard. |
 | `APPERATOR_SABLIER_URL` | – | Sablier's address, for example `http://sablier:10000`. Required for `idle_timeout`. |
 | `APPERATOR_SABLIER_TIMEOUT` | `30s` | How long a request waits for a sleeping app to start. |
 | `APPERATOR_START_TIMEOUT` | `60s` | How long a start may take before it fails. |
